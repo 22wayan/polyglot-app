@@ -25,7 +25,6 @@ db.on('populate', async (tx) => {
     todayDate: todayKey(),
     activeLangs: LANG_ORDER,
     newToday: {},
-    apiKey: '',
   });
 });
 

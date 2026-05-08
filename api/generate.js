@@ -1,5 +1,7 @@
 // Vercel Serverless Function — Anthropic API proxy.
-// Reads ANTHROPIC_API_KEY from env. If missing, returns 503 so the frontend can show a lock state.
+// Reads ANTHROPIC_API_KEY from env. If missing, returns 503 so the frontend
+// can show a lock state. Optional VITE_APP_TOKEN gates the endpoint with a
+// shared secret built into the client bundle (filters drive-by abuse).
 
 const MAX_PROMPT_CHARS = 8000;
 const MAX_SYSTEM_CHARS = 8000;
@@ -11,14 +13,11 @@ const ALLOWED_MODELS = new Set([
   'claude-haiku-4-5-20251001',
 ]);
 
-// Simple per-IP rate limit (in-memory, per Fluid Compute instance).
-// Not bullet-proof across instances, but enough to deflect drive-by abuse.
 const RATE_LIMIT = { windowMs: 60_000, max: 12 };
 const buckets = new Map();
 function rateLimit(ip) {
   const now = Date.now();
   const cutoff = now - RATE_LIMIT.windowMs;
-  // Lazy cleanup
   if (buckets.size > 1000) {
     for (const [k, arr] of buckets) {
       const trimmed = arr.filter(t => t > cutoff);
@@ -36,18 +35,67 @@ function rateLimit(ip) {
   return true;
 }
 
+// On Vercel, x-real-ip is set by the edge to the actual client IP.
+// x-forwarded-for is appended-to as the request travels — the *last* entry
+// is what Vercel saw, the first entries are attacker-controlled. Reading the
+// first entry (as we did before) lets anyone bypass the per-IP rate limit
+// by sending a fresh fake IP each request.
 function clientIp(req) {
+  const real = req.headers['x-real-ip'];
+  if (typeof real === 'string' && real.length) return real.trim();
   const fwd = req.headers['x-forwarded-for'];
-  if (typeof fwd === 'string' && fwd.length) return fwd.split(',')[0].trim();
+  if (typeof fwd === 'string' && fwd.length) {
+    const parts = fwd.split(',').map(s => s.trim()).filter(Boolean);
+    if (parts.length) return parts[parts.length - 1];
+  }
   return req.socket?.remoteAddress || 'unknown';
 }
 
-export default async function handler(req, res) {
-  const apiKey = process.env.ANTHROPIC_API_KEY;
+// Origin allowlist: any *.vercel.app deploy of this app, plus localhost dev.
+// Combined with the shared token, an attacker has to: (1) discover the URL,
+// (2) extract the token from the JS bundle, (3) spoof Origin. Each step adds
+// friction without breaking preview deploys.
+function originAllowed(req) {
+  const origin = req.headers.origin || req.headers.referer || '';
+  if (!origin) return false;
+  try {
+    const u = new URL(origin);
+    const host = u.hostname;
+    if (host === 'localhost' || host === '127.0.0.1') return true;
+    if (host.endsWith('.vercel.app')) return true;
+    return false;
+  } catch {
+    return false;
+  }
+}
 
-  // Probe: cheap GET endpoint that tells the client whether the key is set,
-  // without ever hitting Anthropic.
+function tokenAllowed(req) {
+  const expected = process.env.VITE_APP_TOKEN;
+  if (!expected) return true; // Token gating is optional — skip if not configured.
+  const got = req.headers['x-app-token'];
+  return typeof got === 'string' && got === expected;
+}
+
+function noStore(res) {
+  res.setHeader('Cache-Control', 'no-store, max-age=0');
+}
+
+export default async function handler(req, res) {
+  noStore(res);
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  const ip = clientIp(req);
+
+  // Rate-limit FIRST — applies to probe and POST equally so the endpoint
+  // can't be spammed even when no key is set.
+  if (!rateLimit(ip)) {
+    return res.status(429).json({ error: 'Too many requests', message: 'Bitte kurz warten.' });
+  }
+
+  // Probe: GET ?probe=1. Short-circuits without hitting Anthropic. Still
+  // requires origin + token so it can't be used to enumerate.
   if (req.method === 'GET' && req.query?.probe) {
+    if (!originAllowed(req)) return res.status(403).json({ error: 'Forbidden' });
+    if (!tokenAllowed(req)) return res.status(403).json({ error: 'Forbidden' });
     if (!apiKey) return res.status(503).json({ error: 'NO_API_KEY' });
     return res.status(200).json({ ok: true });
   }
@@ -56,16 +104,18 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
+  if (!originAllowed(req)) {
+    return res.status(403).json({ error: 'Forbidden' });
+  }
+  if (!tokenAllowed(req)) {
+    return res.status(403).json({ error: 'Forbidden' });
+  }
+
   if (!apiKey) {
     return res.status(503).json({
       error: 'NO_API_KEY',
       message: 'Set ANTHROPIC_API_KEY in Vercel project env vars and redeploy.'
     });
-  }
-
-  const ip = clientIp(req);
-  if (!rateLimit(ip)) {
-    return res.status(429).json({ error: 'Too many requests', message: 'Bitte kurz warten.' });
   }
 
   try {

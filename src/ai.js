@@ -189,6 +189,16 @@ export function recognizeSpeech(langCode, { signal } = {}) {
 const MODEL_SONNET = 'claude-sonnet-4-6';
 const MODEL_HAIKU  = 'claude-haiku-4-5-20251001';
 
+// Shared secret baked in at build time. Trivially extractable from the JS
+// bundle, but raises the bar against drive-by curl spam against /api/generate.
+const APP_TOKEN = import.meta.env.VITE_APP_TOKEN || '';
+
+function authHeaders() {
+  const h = { 'Content-Type': 'application/json' };
+  if (APP_TOKEN) h['x-app-token'] = APP_TOKEN;
+  return h;
+}
+
 async function callAPI(prompt, { max_tokens = 1500, system = null, model = null, cacheSystem = false } = {}) {
   const body = { prompt, max_tokens };
   if (system) body.system = system;
@@ -196,11 +206,12 @@ async function callAPI(prompt, { max_tokens = 1500, system = null, model = null,
   if (cacheSystem) body.cache_system = true;
   const res = await fetch('/api/generate', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: authHeaders(),
     body: JSON.stringify(body),
   });
   if (res.status === 503) throw new NoApiKeyError();
   if (res.status === 429) throw new Error('Zu viele Anfragen — kurz warten');
+  if (res.status === 403) throw new Error('API-Zugriff verweigert (Konfig prüfen)');
   if (!res.ok) {
     const errText = await res.text().catch(() => '');
     throw new Error(`API ${res.status}: ${errText.slice(0, 100)}`);
@@ -457,7 +468,7 @@ sind hier null, weil der Schüler noch nichts gesagt hat.`;
 // ============================================================
 export async function probeApiKey() {
   try {
-    const r = await fetch('/api/generate?probe=1', { method: 'GET' });
+    const r = await fetch('/api/generate?probe=1', { method: 'GET', headers: authHeaders() });
     return r.status === 200;
   } catch {
     return false;
