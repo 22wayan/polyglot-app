@@ -1,6 +1,6 @@
 import Dexie from 'dexie';
 import { SEED, CYRILLIC, HANZI, LANG_ORDER } from './data';
-import { todayKey } from './fsrs';
+import { todayKey, yesterdayKey } from './fsrs';
 
 export const db = new Dexie('polyglot');
 
@@ -25,7 +25,7 @@ db.on('populate', async (tx) => {
     todayDate: todayKey(),
     activeLangs: LANG_ORDER,
     newToday: {},
-    apiKey: '',  // user can paste later in settings
+    apiKey: '',
   });
 });
 
@@ -68,30 +68,70 @@ export async function updateMeta(patch) {
   await db.meta.put({ ...cur, ...patch, key: 'global' });
 }
 
-export async function bumpStreak() {
-  const cur = await getMeta();
-  const t = todayKey();
+// Apply daily rollover to a meta object (in-memory, caller persists).
+function rolloverIfNeeded(cur, t) {
   if (cur.todayDate !== t) {
-    const yest = (() => { const d = new Date(); d.setDate(d.getDate() - 1); return `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`; })();
-    const newStreak = cur.lastStudyDate === yest ? (cur.streak || 0) + 1 : 1;
-    await updateMeta({
-      todayDate: t, todayReviewed: 1, streak: newStreak, lastStudyDate: t,
-      totalReviewed: (cur.totalReviewed || 0) + 1, newToday: {},
-    });
-  } else {
-    await updateMeta({
-      todayReviewed: (cur.todayReviewed || 0) + 1,
-      totalReviewed: (cur.totalReviewed || 0) + 1,
-      lastStudyDate: t,
-    });
+    return { ...cur, todayDate: t, todayReviewed: 0, newToday: {} };
   }
+  return cur;
+}
+
+// Bump streak inside an existing transaction (or standalone).
+function bumpStreakInPlace(cur, t) {
+  if (cur.todayDate !== t) {
+    const yest = yesterdayKey();
+    const newStreak = cur.lastStudyDate === yest ? (cur.streak || 0) + 1 : 1;
+    return {
+      ...cur,
+      todayDate: t,
+      todayReviewed: 1,
+      newToday: {},
+      streak: newStreak,
+      lastStudyDate: t,
+      totalReviewed: (cur.totalReviewed || 0) + 1,
+    };
+  }
+  return {
+    ...cur,
+    todayReviewed: (cur.todayReviewed || 0) + 1,
+    totalReviewed: (cur.totalReviewed || 0) + 1,
+    lastStudyDate: t,
+  };
+}
+
+export async function bumpStreak() {
+  const t = todayKey();
+  await db.transaction('rw', db.meta, async () => {
+    const cur = await getMeta();
+    const next = bumpStreakInPlace(cur, t);
+    await db.meta.put({ ...next, key: 'global' });
+  });
 }
 
 export async function maybeRolloverDay() {
-  const cur = await getMeta();
-  if (cur.todayDate !== todayKey()) {
-    await updateMeta({ todayDate: todayKey(), todayReviewed: 0, newToday: {} });
-  }
+  const t = todayKey();
+  await db.transaction('rw', db.meta, async () => {
+    const cur = await getMeta();
+    const next = rolloverIfNeeded(cur, t);
+    if (next !== cur) await db.meta.put({ ...next, key: 'global' });
+  });
+}
+
+// Atomically: write the FSRS-updated card, bump newToday for new cards,
+// and update streak/totals. Avoids races when the user rates rapidly.
+export async function commitReview(table, updatedCard, wasNew, newCounterKey) {
+  const t = todayKey();
+  await db.transaction('rw', table, db.meta, async () => {
+    await table.put(updatedCard);
+    const cur = await getMeta();
+    let next = bumpStreakInPlace(cur, t);
+    if (wasNew) {
+      const newToday = { ...(next.newToday || {}) };
+      newToday[newCounterKey] = (newToday[newCounterKey] || 0) + 1;
+      next = { ...next, newToday };
+    }
+    await db.meta.put({ ...next, key: 'global' });
+  });
 }
 
 export async function mineWord(lang, word, translation, pronunciation = '') {
@@ -109,7 +149,6 @@ export async function mineWord(lang, word, translation, pronunciation = '') {
 
 export async function resetAll() {
   await db.delete();
-  // Re-create
   await db.open();
 }
 
@@ -143,7 +182,10 @@ export async function importJSON(file) {
     if (data.stories) await db.stories.bulkAdd(data.stories);
     if (data.chatMessages) {
       // strip localId so dexie re-assigns
-      await db.chatMessages.bulkAdd(data.chatMessages.map(({ localId, ...rest }) => rest));
+      await db.chatMessages.bulkAdd(data.chatMessages.map((m) => {
+        const { localId: _drop, ...rest } = m;
+        return rest;
+      }));
     }
     if (data.meta) await db.meta.bulkAdd(data.meta);
   });

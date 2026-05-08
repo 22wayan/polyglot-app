@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { Sparkles, Brain, BookOpen, MessageCircle, Languages, BarChart3, Type } from 'lucide-react';
-import { db, getMeta, updateMeta, bumpStreak, mineWord as dbMineWord, maybeRolloverDay, exportJSON, importJSON, resetAll } from './db';
-import { applyFSRS, todayKey } from './fsrs';
+import { Brain, BookOpen, MessageCircle, Languages, BarChart3, Type } from 'lucide-react';
+import { db, getMeta, updateMeta, commitReview, mineWord as dbMineWord, maybeRolloverDay, exportJSON, importJSON, resetAll } from './db';
+import { applyFSRS } from './fsrs';
 import { LANGUAGES, LANG_ORDER, NEW_PER_DAY } from './data';
 import * as ai from './ai';
 import {
@@ -37,17 +37,8 @@ export default function App() {
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      try {
-        const r = await fetch('/api/generate', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ prompt: '__probe__', max_tokens: 1 }),
-        });
-        if (!cancelled) setHasApiKey(r.status !== 503);
-      } catch {
-        // network/serverless not running locally → assume locked
-        if (!cancelled) setHasApiKey(false);
-      }
+      const ok = await ai.probeApiKey();
+      if (!cancelled) setHasApiKey(ok);
     })();
     return () => { cancelled = true; };
   }, []);
@@ -102,14 +93,8 @@ export default function App() {
   const handleRateVocab = useCallback(async (rating) => {
     if (!currentVocab) return;
     const updated = applyFSRS(currentVocab, rating);
-    await db.vocab.put(updated);
-    if (currentVocab.state === 'new') {
-      const cur = await getMeta();
-      const newToday = { ...(cur.newToday || {}) };
-      newToday[currentVocab.lang] = (newToday[currentVocab.lang] || 0) + 1;
-      await updateMeta({ newToday });
-    }
-    await bumpStreak();
+    const wasNew = currentVocab.state === 'new';
+    await commitReview(db.vocab, updated, wasNew, currentVocab.lang);
     setRevealed(false);
     setGrammarOpen(false);
   }, [currentVocab]);
@@ -117,15 +102,8 @@ export default function App() {
   const handleRateScript = useCallback(async (rating) => {
     if (!currentScript) return;
     const updated = applyFSRS(currentScript, rating);
-    await db.scripts.put(updated);
-    if (currentScript.state === 'new') {
-      const cur = await getMeta();
-      const newToday = { ...(cur.newToday || {}) };
-      const k = `script_${currentScript.lang}`;
-      newToday[k] = (newToday[k] || 0) + 1;
-      await updateMeta({ newToday });
-    }
-    await bumpStreak();
+    const wasNew = currentScript.state === 'new';
+    await commitReview(db.scripts, updated, wasNew, `script_${currentScript.lang}`);
     setRevealed(false);
   }, [currentScript]);
 
@@ -172,8 +150,8 @@ export default function App() {
   // ---------- Chat ----------
   const startChat = useCallback(async (lang) => {
     setChatLang(lang);
-    const existing = chats.filter(m => m.lang === lang);
-    if (existing.length === 0) {
+    const existingCount = await db.chatMessages.where({ lang }).count();
+    if (existingCount === 0) {
       setGenerating('chat'); setGenError(null);
       try {
         const start = await ai.chatStart(lang);
@@ -187,16 +165,16 @@ export default function App() {
         else { setGenError(e.message); }
       } finally { setGenerating(null); }
     }
-  }, [chats]);
+  }, []);
 
   const sendChat = useCallback(async (text) => {
     if (!chatLang) return;
     await db.chatMessages.add({ role: 'user', lang: chatLang, ts: Date.now(), target: text });
     setGenerating('chat'); setGenError(null);
     try {
-      const history = chats.filter(m => m.lang === chatLang)
-        .map(m => ({ role: m.role, target: m.target }));
-      history.push({ role: 'user', target: text });
+      // Pull authoritative history from DB to avoid stale-closure races on rapid sends
+      const dbMessages = await db.chatMessages.where({ lang: chatLang }).sortBy('ts');
+      const history = dbMessages.map(m => ({ role: m.role, target: m.target }));
       const reply = await ai.chatTurn(chatLang, history, text);
       await db.chatMessages.add({
         role: 'assistant', lang: chatLang, ts: Date.now(),
@@ -210,7 +188,7 @@ export default function App() {
       if (e instanceof ai.NoApiKeyError) { setHasApiKey(false); setGenError('API-Key fehlt'); }
       else { setGenError(e.message); }
     } finally { setGenerating(null); }
-  }, [chatLang, chats]);
+  }, [chatLang]);
 
   const resetChat = useCallback(async (lang) => {
     if (!confirm('Diesen Chat wirklich löschen?')) return;
@@ -270,8 +248,8 @@ export default function App() {
   // ---------- Loading state ----------
   if (!meta) {
     return (
-      <div className="h-full flex items-center justify-center">
-        <div className="font-display text-[28px] opacity-50">Polyglot</div>
+      <div className="h-full flex items-center justify-center" style={{ background: '#0F0E0D' }}>
+        <div className="font-display text-[28px] loading-pulse" style={{ color: '#E8DCC4' }}>Polyglot</div>
       </div>
     );
   }
@@ -282,6 +260,7 @@ export default function App() {
   const newTodayTotal = Object.entries(meta.newToday || {})
     .filter(([k]) => !k.startsWith('script_'))
     .reduce((a, [, n]) => a + n, 0);
+  const newRemaining = Math.max(0, NEW_PER_DAY * activeLangs.length - newTodayTotal);
 
   return (
     <div className="h-full flex flex-col relative grain max-w-md mx-auto safe-top safe-bottom" style={{ background: '#0F0E0D' }}>
@@ -293,8 +272,9 @@ export default function App() {
           <span className="font-mono text-[8px] uppercase tracking-[0.2em] opacity-30">A0</span>
         </div>
         <div className="flex items-center gap-1.5">
-          <Pill icon="🔥" value={meta.streak || 0} label="streak" />
-          <Pill icon="✦" value={`${totalDue}+${NEW_PER_DAY * activeLangs.length - newTodayTotal}`} label="fällig" />
+          <Pill icon="🔥" value={meta.streak || 0} label="streak" title={`${meta.streak || 0} Tage am Stück gelernt`} />
+          <Pill value={totalDue} label="fällig" title={`${totalDue} Karten zur Wiederholung fällig`} />
+          <Pill value={newRemaining} label="neu" title={`${newRemaining} neue Karten heute übrig`} />
         </div>
       </header>
 
@@ -309,6 +289,7 @@ export default function App() {
             grammarOpen={grammarOpen}
             onToggleGrammar={() => setGrammarOpen(g => !g)}
             newToday={currentVocab ? (meta.newToday?.[currentVocab.lang] || 0) : 0}
+            onNavigate={setView}
           />
         )}
         {view === 'script' && (

@@ -54,5 +54,7 @@ export function applyFSRS(card, rating, now = Date.now()) {
   return { ...card, stability, difficulty, state: newState, reps: (card.reps || 0) + 1, lapses, due, lastReview: now, stats };
 }
 
-export const todayKey = () => { const d = new Date(); return `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`; };
-export const yesterdayKey = () => { const d = new Date(); d.setDate(d.getDate() - 1); return `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`; };
+const pad = (n) => String(n).padStart(2, '0');
+const isoDate = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+export const todayKey = () => isoDate(new Date());
+export const yesterdayKey = () => { const d = new Date(); d.setDate(d.getDate() - 1); return isoDate(d); };

@@ -12,11 +12,20 @@ body {
   font-family: 'Manrope', system-ui, sans-serif;
   -webkit-font-smoothing: antialiased;
   overscroll-behavior: none;
+  -webkit-tap-highlight-color: transparent;
 }
+* { -webkit-tap-highlight-color: transparent; }
 button { transition: transform 100ms ease, background 150ms ease, border-color 150ms ease, opacity 150ms ease; }
 button:active:not(:disabled) { transform: scale(0.97); }
 input, textarea { background: transparent; outline: none; border: none; color: inherit; font-family: inherit; }
 input::placeholder { color: rgba(232, 220, 196, 0.3); }
+
+:focus { outline: none; }
+:focus-visible {
+  outline: 2px solid rgba(232, 220, 196, 0.6);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
 
 .font-display { font-family: 'Fraunces', Georgia, serif; font-optical-sizing: auto; }
 .font-mono    { font-family: 'JetBrains Mono', ui-monospace, monospace; }
@@ -41,6 +50,27 @@ input::placeholder { color: rgba(232, 220, 196, 0.3); }
   50%      { box-shadow: 0 0 0 10px rgba(255,107,107,0); }
 }
 
+.loading-pulse { animation: loadingPulse 1.6s ease-in-out infinite; }
+@keyframes loadingPulse {
+  0%, 100% { opacity: 0.4; }
+  50%      { opacity: 0.8; }
+}
+
+.score-celebrate { animation: scoreCelebrate 600ms cubic-bezier(0.2, 0.8, 0.2, 1) both; }
+@keyframes scoreCelebrate {
+  0%   { transform: scale(1); }
+  40%  { transform: scale(1.08); }
+  100% { transform: scale(1); }
+}
+
+.shake-anim { animation: shake 320ms cubic-bezier(0.36, 0.07, 0.19, 0.97) both; }
+@keyframes shake {
+  10%, 90% { transform: translateX(-1px); }
+  20%, 80% { transform: translateX(2px); }
+  30%, 50%, 70% { transform: translateX(-4px); }
+  40%, 60% { transform: translateX(4px); }
+}
+
 .scroll-y { overflow-y: auto; -webkit-overflow-scrolling: touch; }
 .scroll-y::-webkit-scrollbar { width: 4px; }
 .scroll-y::-webkit-scrollbar-thumb { background: rgba(232,220,196,0.1); border-radius: 2px; }
@@ -48,3 +78,16 @@ input::placeholder { color: rgba(232, 220, 196, 0.3); }
 /* iOS safe areas */
 .safe-top    { padding-top: max(env(safe-area-inset-top), 0px); }
 .safe-bottom { padding-bottom: max(env(safe-area-inset-bottom), 0px); }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+  .reveal-anim, .card-anim, .flash-anim, .grammar-anim,
+  .pulse-rec, .loading-pulse, .score-celebrate, .shake-anim {
+    animation: none !important;
+  }
+  button:active:not(:disabled) { transform: none; }
+}

@@ -1,12 +1,55 @@
 // Vercel Serverless Function — Anthropic API proxy.
 // Reads ANTHROPIC_API_KEY from env. If missing, returns 503 so the frontend can show a lock state.
 
+const MAX_PROMPT_CHARS = 8000;
+const MAX_SYSTEM_CHARS = 2000;
+const MAX_TOKENS_CAP = 3000;
+
+// Simple per-IP rate limit (in-memory, per Fluid Compute instance).
+// Not bullet-proof across instances, but enough to deflect drive-by abuse.
+const RATE_LIMIT = { windowMs: 60_000, max: 12 };
+const buckets = new Map();
+function rateLimit(ip) {
+  const now = Date.now();
+  const cutoff = now - RATE_LIMIT.windowMs;
+  // Lazy cleanup
+  if (buckets.size > 1000) {
+    for (const [k, arr] of buckets) {
+      const trimmed = arr.filter(t => t > cutoff);
+      if (trimmed.length === 0) buckets.delete(k);
+      else buckets.set(k, trimmed);
+    }
+  }
+  const arr = (buckets.get(ip) || []).filter(t => t > cutoff);
+  if (arr.length >= RATE_LIMIT.max) {
+    buckets.set(ip, arr);
+    return false;
+  }
+  arr.push(now);
+  buckets.set(ip, arr);
+  return true;
+}
+
+function clientIp(req) {
+  const fwd = req.headers['x-forwarded-for'];
+  if (typeof fwd === 'string' && fwd.length) return fwd.split(',')[0].trim();
+  return req.socket?.remoteAddress || 'unknown';
+}
+
 export default async function handler(req, res) {
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+
+  // Probe: cheap GET endpoint that tells the client whether the key is set,
+  // without ever hitting Anthropic.
+  if (req.method === 'GET' && req.query?.probe) {
+    if (!apiKey) return res.status(503).json({ error: 'NO_API_KEY' });
+    return res.status(200).json({ ok: true });
+  }
+
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
-  const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) {
     return res.status(503).json({
       error: 'NO_API_KEY',
@@ -14,16 +57,33 @@ export default async function handler(req, res) {
     });
   }
 
-  try {
-    const { prompt, max_tokens = 1500, system = null } = req.body || {};
-    if (!prompt) return res.status(400).json({ error: 'Missing prompt' });
+  const ip = clientIp(req);
+  if (!rateLimit(ip)) {
+    return res.status(429).json({ error: 'Too many requests', message: 'Bitte kurz warten.' });
+  }
 
-    const body = {
+  try {
+    const body = req.body || {};
+    let { prompt, max_tokens = 1500, system = null } = body;
+
+    if (typeof prompt !== 'string' || !prompt.trim()) {
+      return res.status(400).json({ error: 'Missing prompt' });
+    }
+    if (prompt.length > MAX_PROMPT_CHARS) {
+      return res.status(413).json({ error: 'Prompt too long', limit: MAX_PROMPT_CHARS });
+    }
+    if (system != null) {
+      if (typeof system !== 'string') return res.status(400).json({ error: 'Invalid system' });
+      if (system.length > MAX_SYSTEM_CHARS) return res.status(413).json({ error: 'System too long', limit: MAX_SYSTEM_CHARS });
+    }
+    max_tokens = Math.min(Math.max(parseInt(max_tokens, 10) || 1500, 1), MAX_TOKENS_CAP);
+
+    const upstreamBody = {
       model: 'claude-sonnet-4-20250514',
       max_tokens,
       messages: [{ role: 'user', content: prompt }],
     };
-    if (system) body.system = system;
+    if (system) upstreamBody.system = system;
 
     const upstream = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
@@ -32,7 +92,7 @@ export default async function handler(req, res) {
         'x-api-key': apiKey,
         'anthropic-version': '2023-06-01',
       },
-      body: JSON.stringify(body),
+      body: JSON.stringify(upstreamBody),
     });
 
     if (!upstream.ok) {

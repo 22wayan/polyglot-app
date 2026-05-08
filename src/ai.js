@@ -8,16 +8,71 @@ export class NoApiKeyError extends Error {
 }
 
 // ============================================================
-//  Speech: TTS + Recognition + Similarity
+//  Platform detection — iOS-PWA breaks Web Speech API (Apple bug)
 // ============================================================
+
+export function isIOS() {
+  if (typeof navigator === 'undefined') return false;
+  return /iPad|iPhone|iPod/.test(navigator.userAgent)
+    || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+}
+
+export function isStandalonePWA() {
+  if (typeof window === 'undefined') return false;
+  return window.matchMedia?.('(display-mode: standalone)').matches
+    || window.navigator.standalone === true;
+}
+
+export function speechRecognitionAvailable() {
+  if (typeof window === 'undefined') return false;
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SR) return false;
+  // Apple bug: Web Speech API silently dies in installed PWAs on iOS
+  if (isIOS() && isStandalonePWA()) return false;
+  return true;
+}
+
+// ============================================================
+//  TTS — voices populate async on iOS Safari, prime them once
+// ============================================================
+
+let _voicesPrimed = false;
+function primeVoices() {
+  if (_voicesPrimed || typeof window === 'undefined' || !window.speechSynthesis) return;
+  const synth = window.speechSynthesis;
+  synth.getVoices(); // triggers async populate
+  synth.addEventListener?.('voiceschanged', () => { _voicesPrimed = true; }, { once: true });
+  _voicesPrimed = true;
+}
+if (typeof window !== 'undefined' && window.speechSynthesis) primeVoices();
+
+function pickVoice(langCode) {
+  const synth = window.speechSynthesis;
+  const all = synth.getVoices() || [];
+  if (!all.length) return null;
+  const exact = all.find(v => v.lang === langCode);
+  if (exact) return exact;
+  const prefix = langCode.split('-')[0];
+  const partial = all.find(v => v.lang.startsWith(prefix));
+  return partial || null;
+}
 
 export function speak(text, langCode, rate = 0.85) {
   if (typeof window === 'undefined' || !window.speechSynthesis) return;
-  window.speechSynthesis.cancel();
+  if (!text) return;
+  const synth = window.speechSynthesis;
+  synth.cancel();
   const u = new SpeechSynthesisUtterance(text);
-  u.lang = langCode; u.rate = rate;
-  window.speechSynthesis.speak(u);
+  u.lang = langCode;
+  u.rate = rate;
+  const v = pickVoice(langCode);
+  if (v) u.voice = v;
+  synth.speak(u);
 }
+
+// ============================================================
+//  Levenshtein + similarity for pronunciation scoring
+// ============================================================
 
 export function levenshtein(a, b) {
   const m = a.length, n = b.length;
@@ -35,7 +90,7 @@ export function levenshtein(a, b) {
 }
 
 function normalizeForCompare(s) {
-  let n = s.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  let n = s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
   n = n.replace(/[¿?¡!.,;:。，！？、]/g, '').trim();
   return n;
 }
@@ -48,17 +103,80 @@ export function similarity(spoken, target) {
   return 1 - dist / Math.max(a.length, b.length);
 }
 
-export function recognizeSpeech(langCode) {
+// ============================================================
+//  Speech recognition with timeout + clean teardown
+// ============================================================
+
+const SR_TIMEOUT_MS = 8000;
+
+function mapSrError(code) {
+  if (code === 'not-allowed' || code === 'service-not-allowed') return 'Mikrofon-Zugriff verweigert — in den Einstellungen erlauben';
+  if (code === 'no-speech') return 'Nichts gehört — sprich lauter oder näher ans Mic';
+  if (code === 'audio-capture') return 'Kein Mikrofon gefunden';
+  if (code === 'network') return 'Netzwerk-Fehler bei der Spracherkennung';
+  if (code === 'aborted') return 'Spracherkennung abgebrochen';
+  return code || 'Mikrofon-Fehler';
+}
+
+export function recognizeSpeech(langCode, { signal } = {}) {
   return new Promise((resolve, reject) => {
+    if (!speechRecognitionAvailable()) {
+      return reject(new Error(
+        isIOS() && isStandalonePWA()
+          ? 'Spracherkennung in installierter App nicht verfügbar — im Browser-Tab nutzen'
+          : 'Spracherkennung nicht verfügbar (Chrome auf Desktop, Safari im Tab)'
+      ));
+    }
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!SR) return reject(new Error('Spracherkennung in deinem Browser nicht verfügbar (Chrome/Safari nutzen)'));
     const r = new SR();
-    r.lang = langCode; r.continuous = false; r.interimResults = false; r.maxAlternatives = 1;
-    let resolved = false;
-    r.onresult = (e) => { resolved = true; resolve(e.results[0][0].transcript); };
-    r.onerror = (e) => { resolved = true; reject(new Error(e.error || 'Mikrofon-Fehler')); };
-    r.onend = () => { if (!resolved) reject(new Error('Nichts erkannt — sprich lauter')); };
-    r.start();
+    r.lang = langCode;
+    r.continuous = false;
+    r.interimResults = false;
+    r.maxAlternatives = 1;
+
+    let done = false;
+    let timeoutId = null;
+
+    const cleanup = () => {
+      if (timeoutId) { clearTimeout(timeoutId); timeoutId = null; }
+      r.onresult = null; r.onerror = null; r.onend = null;
+      if (signal) signal.removeEventListener?.('abort', onAbort);
+    };
+    const finish = (fn, val) => {
+      if (done) return;
+      done = true;
+      cleanup();
+      fn(val);
+    };
+    const onAbort = () => {
+      try { r.abort(); } catch {}
+      finish(reject, new Error('Abgebrochen'));
+    };
+
+    r.onresult = (e) => {
+      const t = e.results?.[0]?.[0]?.transcript;
+      if (t) finish(resolve, t);
+      else finish(reject, new Error('Nichts erkannt'));
+    };
+    r.onerror = (e) => finish(reject, new Error(mapSrError(e.error)));
+    r.onend = () => finish(reject, new Error('Nichts gehört — sprich lauter'));
+
+    timeoutId = setTimeout(() => {
+      try { r.stop(); } catch {}
+      try { r.abort(); } catch {}
+      finish(reject, new Error('Spracherkennung antwortet nicht — versuch\'s nochmal'));
+    }, SR_TIMEOUT_MS);
+
+    if (signal) {
+      if (signal.aborted) return onAbort();
+      signal.addEventListener('abort', onAbort, { once: true });
+    }
+
+    try {
+      r.start();
+    } catch (err) {
+      finish(reject, new Error(err?.message || 'Mikrofon konnte nicht starten'));
+    }
   });
 }
 
@@ -75,6 +193,7 @@ async function callAPI(prompt, max_tokens = 1500, system = null) {
     body: JSON.stringify({ prompt, max_tokens, system }),
   });
   if (res.status === 503) throw new NoApiKeyError();
+  if (res.status === 429) throw new Error('Zu viele Anfragen — kurz warten');
   if (!res.ok) {
     const errText = await res.text().catch(() => '');
     throw new Error(`API ${res.status}: ${errText.slice(0, 100)}`);
@@ -85,10 +204,40 @@ async function callAPI(prompt, max_tokens = 1500, system = null) {
 
 function extractJSON(text) {
   const clean = text.replace(/```json|```/g, '').trim();
-  const arrMatch = clean.match(/\[[\s\S]*\]/);
-  const objMatch = clean.match(/\{[\s\S]*\}/);
-  if (arrMatch && (!objMatch || arrMatch.index < objMatch.index)) return JSON.parse(arrMatch[0]);
-  if (objMatch) return JSON.parse(objMatch[0]);
+  // Try direct parse first — fast path when model behaves
+  try { return JSON.parse(clean); } catch {}
+  // Fallback: find first balanced JSON expression
+  const tryParseFrom = (start, open, close) => {
+    let depth = 0, inStr = false, esc = false;
+    for (let i = start; i < clean.length; i++) {
+      const ch = clean[i];
+      if (inStr) {
+        if (esc) esc = false;
+        else if (ch === '\\') esc = true;
+        else if (ch === '"') inStr = false;
+        continue;
+      }
+      if (ch === '"') inStr = true;
+      else if (ch === open) depth++;
+      else if (ch === close) {
+        depth--;
+        if (depth === 0) {
+          try { return JSON.parse(clean.slice(start, i + 1)); } catch { return null; }
+        }
+      }
+    }
+    return null;
+  };
+  const arrStart = clean.indexOf('[');
+  const objStart = clean.indexOf('{');
+  const candidates = [];
+  if (arrStart !== -1) candidates.push([arrStart, '[', ']']);
+  if (objStart !== -1) candidates.push([objStart, '{', '}']);
+  candidates.sort((a, b) => a[0] - b[0]);
+  for (const [s, o, c] of candidates) {
+    const v = tryParseFrom(s, o, c);
+    if (v !== null) return v;
+  }
   throw new Error('Kein JSON in der Antwort');
 }
 
@@ -191,4 +340,17 @@ export async function chatStart(lang) {
 NUR JSON: {"reply":"...",${pronField}"replyTranslation":"...","newWords":[]}`;
   const text = await callAPI(prompt, 500);
   return extractJSON(text);
+}
+
+// ============================================================
+//  Probe — quick check whether the API key is configured
+//  Server short-circuits without calling Anthropic.
+// ============================================================
+export async function probeApiKey() {
+  try {
+    const r = await fetch('/api/generate?probe=1', { method: 'GET' });
+    return r.status === 200;
+  } catch {
+    return false;
+  }
 }
