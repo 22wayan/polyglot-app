@@ -825,13 +825,17 @@ export function StatsView({ meta, vocab, scripts, stories, chats }) {
           const vc = vocab.filter(c => c.lang === lang);
           const sc = scripts.filter(c => c.lang === lang);
           const v_total = vc.length;
-          const v_learned = vc.filter(c => c.reps >= 2 && c.state === 'review').length;
+          // Begonnen = mindestens 1× geratet (bewegt sich beim ersten Klick).
+          // Gemeistert = mindestens 2× durch und stabil im Review-State.
+          const v_begun = vc.filter(c => c.state !== 'new').length;
+          const v_mastered = vc.filter(c => c.reps >= 2 && c.state === 'review').length;
           const v_due = vc.filter(c => c.state !== 'new' && c.due <= now).length;
           const v_new = vc.filter(c => c.state === 'new').length;
           const s_total = sc.length;
-          const s_learned = sc.filter(c => c.reps >= 2).length;
-          const pct = v_total ? Math.round((v_learned / v_total) * 100) : 0;
-          const sPct = s_total ? Math.round((s_learned / s_total) * 100) : 0;
+          const s_begun = sc.filter(c => c.state !== 'new').length;
+          const s_mastered = sc.filter(c => c.reps >= 2 && c.state === 'review').length;
+          const pct = v_total ? Math.round((v_begun / v_total) * 100) : 0;
+          const sPct = s_total ? Math.round((s_begun / s_total) * 100) : 0;
           const active = (meta.activeLangs || LANG_ORDER).includes(lang);
           const hasScript = !!L.script;
           const storiesCount = stories.filter(s => s.lang === lang).length;
@@ -849,7 +853,7 @@ export function StatsView({ meta, vocab, scripts, stories, chats }) {
                 <div className="h-full rounded-full transition-all" style={{ width: `${pct}%`, background: L.accent }} />
               </div>
               <div className="flex justify-between font-mono text-[9px] uppercase tracking-wider opacity-60 mb-2">
-                <span>vokabeln {v_learned}/{v_total}</span>
+                <span>vokabeln {v_begun}/{v_total} · {v_mastered} fest</span>
                 <span>{v_due} fällig · {v_new} neu</span>
               </div>
               {hasScript && (
@@ -857,7 +861,7 @@ export function StatsView({ meta, vocab, scripts, stories, chats }) {
                   <div className="h-1 rounded-full overflow-hidden mb-1" style={{ background: 'rgba(232,220,196,0.06)' }}>
                     <div className="h-full rounded-full transition-all" style={{ width: `${sPct}%`, background: L.accent, opacity: 0.5 }} />
                   </div>
-                  <div className="font-mono text-[9px] uppercase tracking-wider opacity-50 mb-2">schrift {s_learned}/{s_total} ({sPct}%)</div>
+                  <div className="font-mono text-[9px] uppercase tracking-wider opacity-50 mb-2">schrift {s_begun}/{s_total} · {s_mastered} fest ({sPct}%)</div>
                 </>
               )}
               <div className="flex justify-between font-mono text-[9px] uppercase tracking-wider opacity-50">
