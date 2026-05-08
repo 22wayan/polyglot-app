@@ -1,7 +1,7 @@
 {
   "name": "polyglot-app",
   "private": true,
-  "version": "4.0.1",
+  "version": "4.1.0",
   "type": "module",
   "description": "Polyglot — local-first 5-language flashcard app with FSRS, scripts, AI tutoring",
   "scripts": {

@@ -2,8 +2,14 @@
 // Reads ANTHROPIC_API_KEY from env. If missing, returns 503 so the frontend can show a lock state.
 
 const MAX_PROMPT_CHARS = 8000;
-const MAX_SYSTEM_CHARS = 2000;
+const MAX_SYSTEM_CHARS = 8000;
 const MAX_TOKENS_CAP = 3000;
+
+const DEFAULT_MODEL = 'claude-sonnet-4-6';
+const ALLOWED_MODELS = new Set([
+  'claude-sonnet-4-6',
+  'claude-haiku-4-5-20251001',
+]);
 
 // Simple per-IP rate limit (in-memory, per Fluid Compute instance).
 // Not bullet-proof across instances, but enough to deflect drive-by abuse.
@@ -64,7 +70,7 @@ export default async function handler(req, res) {
 
   try {
     const body = req.body || {};
-    let { prompt, max_tokens = 1500, system = null } = body;
+    let { prompt, max_tokens = 1500, system = null, model, cache_system = false } = body;
 
     if (typeof prompt !== 'string' || !prompt.trim()) {
       return res.status(400).json({ error: 'Missing prompt' });
@@ -77,13 +83,18 @@ export default async function handler(req, res) {
       if (system.length > MAX_SYSTEM_CHARS) return res.status(413).json({ error: 'System too long', limit: MAX_SYSTEM_CHARS });
     }
     max_tokens = Math.min(Math.max(parseInt(max_tokens, 10) || 1500, 1), MAX_TOKENS_CAP);
+    const useModel = ALLOWED_MODELS.has(model) ? model : DEFAULT_MODEL;
 
     const upstreamBody = {
-      model: 'claude-sonnet-4-20250514',
+      model: useModel,
       max_tokens,
       messages: [{ role: 'user', content: prompt }],
     };
-    if (system) upstreamBody.system = system;
+    if (system) {
+      upstreamBody.system = cache_system
+        ? [{ type: 'text', text: system, cache_control: { type: 'ephemeral' } }]
+        : system;
+    }
 
     const upstream = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',

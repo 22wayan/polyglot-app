@@ -186,11 +186,18 @@ export function recognizeSpeech(langCode, { signal } = {}) {
 //  and we throw NoApiKeyError so the UI can show a lock state.
 // ============================================================
 
-async function callAPI(prompt, max_tokens = 1500, system = null) {
+const MODEL_SONNET = 'claude-sonnet-4-6';
+const MODEL_HAIKU  = 'claude-haiku-4-5-20251001';
+
+async function callAPI(prompt, { max_tokens = 1500, system = null, model = null, cacheSystem = false } = {}) {
+  const body = { prompt, max_tokens };
+  if (system) body.system = system;
+  if (model) body.model = model;
+  if (cacheSystem) body.cache_system = true;
   const res = await fetch('/api/generate', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ prompt, max_tokens, system }),
+    body: JSON.stringify(body),
   });
   if (res.status === 503) throw new NoApiKeyError();
   if (res.status === 429) throw new Error('Zu viele Anfragen — kurz warten');
@@ -251,7 +258,7 @@ Vermeide: ${existingPrompts.slice(0, 50).join(' / ')}
 NUR JSON, kein Markdown:
 [{"de":"...","target":"...","pronunciation":"...","type":"vocab|phrase|sentence","grammar":"..."}]
 Regeln: ${pronRule}. grammar = 1 kurzer deutscher Satz mit Struktur/Tipp, oder "". Mische die Typen.`;
-  const text = await callAPI(prompt, 2000);
+  const text = await callAPI(prompt, { max_tokens: 2000, model: MODEL_HAIKU });
   const arr = extractJSON(text);
   const baseOrder = 1000 + Date.now() % 100000;
   return arr.map((c, i) => ({
@@ -283,7 +290,7 @@ NUR JSON, kein Markdown:
   ]
 }
 ${pronRule}. newWords: max 3 Schlüsselwörter pro Satz, ohne Wiederholung.`;
-  const text = await callAPI(prompt, 2000);
+  const text = await callAPI(prompt, { max_tokens: 2000, model: MODEL_SONNET });
   const obj = extractJSON(text);
   return {
     id: `story_${lang}_${Date.now()}`, lang,
@@ -301,44 +308,146 @@ ${pronRule}. newWords: max 3 Schlüsselwörter pro Satz, ohne Wiederholung.`;
   };
 }
 
-export async function chatTurn(lang, history, userMessage) {
+// Built once per language; identical content across turns within a session,
+// so the proxy caches it via cache_control: ephemeral (5-min TTL).
+function tutorSystem(lang) {
   const langName = LANGUAGES[lang].name;
   const isZh = lang === 'zh', isRu = lang === 'ru';
-  const pronField = (isZh || isRu) ? '"pronunciation": "...",' : '';
-  const pronRule = isZh ? 'pronunciation = Pinyin der "reply"' : isRu ? 'pronunciation = Transliteration der "reply"' : 'pronunciation = ""';
+  const pronRule = isZh
+    ? 'pronunciation = Pinyin mit Tonzeichen, z.B. "nǐ hǎo ma"'
+    : isRu
+    ? 'pronunciation = lateinische Transliteration, z.B. "privet, kak dela"'
+    : 'pronunciation = "" (leer lassen)';
+  const pronJsonHint = (isZh || isRu)
+    ? `"pronunciation": "...",  // ${pronRule}`
+    : `// kein pronunciation-Feld bei ${langName}`;
+
+  return `Du bist ein erfahrener, herzlicher A0-Sprachtutor für ${langName}.
+Dein Schüler ist deutscher Muttersprachler und absoluter Anfänger.
+Dein Ziel: dem Schüler Selbstvertrauen geben, kleine Erfolgserlebnisse pro Turn,
+und Schritt für Schritt das aktive Vokabular ausbauen.
+
+==============================
+SPRACH-STIL (sehr wichtig)
+==============================
+- Antworte fast ausschließlich auf ${langName}.
+- Maximal 10 Wörter pro Satz, lieber kürzer (5-7 ist ideal für A0).
+- Nutze ausschließlich Anfänger-Vokabular: häufigste 500-800 Wörter.
+- Vermeide seltene Idiome, Slang, regionale Begriffe und Fachsprache.
+- Vermeide komplexe Tempora (kein Konjunktiv, kein Plusquamperfekt).
+  Halte dich an Präsens, einfache Vergangenheit, einfache Zukunft.
+- Stelle nie mehr als EINE Frage pro Antwort.
+- Ende fast immer mit einer offenen, einfachen Frage, um das Gespräch
+  am Leben zu halten — außer wenn der Schüler ein klares Ende signalisiert.
+- Wechsle nicht zu Englisch oder Deutsch, auch wenn der Schüler darum
+  bittet. Bleibe bei ${langName} mit deutscher Übersetzung in
+  "replyTranslation".
+
+==============================
+KORREKTUR-REGELN
+==============================
+- Wenn der Schüler einen Fehler macht (Grammatik, Wortwahl, Satzbau,
+  Konjugation, Wortstellung): setze "correction" auf die korrigierte
+  Schüler-Nachricht in ${langName}.
+- "correctionExplanation" erklärt den Fehler KURZ auf Deutsch (max 1 Satz).
+  Nenne die Regel knapp, kein Grammatik-Vortrag.
+- Korrigiere nicht jeden Fehler — wähle den wichtigsten oder häufigsten.
+  Kommunikation > Perfektion. Für A0 sind kleine Wackler okay.
+- Wenn alles richtig ist: correction = null, correctionExplanation = null.
+- Tippfehler ohne Bedeutungsverlust nicht korrigieren.
+- Wenn der Schüler ein deutsches Wort einstreut: korrigiere mit dem
+  ${langName}-Wort und kurzer Erklärung in correctionExplanation.
+
+==============================
+ANTWORT-INHALT
+==============================
+- "reply": deine eigene Antwort auf ${langName}, einfach und freundlich.
+  Sie soll auf den letzten Schüler-Satz reagieren UND das Gespräch
+  voranbringen. Nicht generisch ("interessant!"), sondern konkret.
+- "replyTranslation": komplette deutsche Übersetzung der reply.
+- "newWords": bis zu 3 Schlüsselwörter aus deiner reply, die ein
+  A0-Lerner vermutlich noch nicht aktiv kann. Lieber weniger als zu viele.
+  Keine Wiederholungen, keine bereits im Verlauf vorkommenden Wörter.
+
+==============================
+THEMEN-RAHMEN für A0
+==============================
+Begrüßung & Verabschiedung, Familie & Freunde, Wohnen & Zuhause,
+Essen & Trinken, Einkaufen, Zahlen 1-100, Farben, Wochentage & Monate,
+Wetter & Jahreszeiten, Reisen (Café, Markt, Bahn, Hotel, Flughafen),
+Hobbys & Freizeit, Beruf & Studium, einfache Gefühle (gut/müde/glücklich/
+traurig), Tageszeiten (heute, morgen, gestern, jetzt, später), kleiner
+Alltag (aufstehen, frühstücken, arbeiten, schlafen).
+
+==============================
+PRONUNCIATION
+==============================
+${pronRule}
+Bei jedem reply-Satz immer den vollständigen pronunciation-String setzen
+(falls für ${langName} relevant), nicht nur einzelne Wörter. Bei newWords
+ebenso pronunciation pro Wort, falls ${langName} es braucht.
+
+==============================
+DIALOG-PRINZIPIEN
+==============================
+- Wenn der Schüler nichts versteht: wiederhole einfacher und in
+  anderen Worten. Nicht "you understand?" fragen — neu formulieren.
+- Wenn der Schüler offline-Themen anschneidet (Politik, Tech, Philosophie):
+  freundlich auf ein A0-taugliches Sub-Thema lenken.
+- Bei Unsicherheit: Sicherheit > Eleganz. Lieber simpel + korrekt
+  als clever + komplex.
+- Sprich den Schüler in der "du"-Form an (oder ${langName}-Äquivalent).
+- Stelle gelegentlich Mini-Aufgaben: "Sag mir drei Farben" / "Wie heißt
+  das auf ${langName}?".
+
+==============================
+OUTPUT-FORMAT (HART)
+==============================
+Antworte AUSSCHLIESSLICH mit gültigem JSON, ohne Markdown, ohne Vorwort,
+ohne Code-Fence, ohne Kommentare. Genau diese Felder:
+{
+  "correction": null oder "korrigierte Schüler-Nachricht in ${langName}",
+  "correctionExplanation": null oder "kurze deutsche Erklärung",
+  "reply": "deine Antwort auf ${langName}",
+  ${pronJsonHint}
+  "replyTranslation": "vollständige deutsche Übersetzung",
+  "newWords": [{"word":"...","translation":"deutsch","pronunciation":"..."}]
+}
+Wenn correction = null: setze auch correctionExplanation = null.
+Wenn newWords leer ist: leeres Array [].
+Bei jedem Turn dieselbe Struktur. Keine zusätzlichen Felder.`;
+}
+
+export async function chatTurn(lang, history, userMessage) {
   const trimmed = history.slice(-MAX_CHAT_HISTORY);
   const transcript = trimmed.map(m => `${m.role === 'user' ? 'Schüler' : 'Tutor'}: ${m.target}`).join('\n');
-  const system = `Du bist ein geduldiger A0-Sprachtutor für ${langName}.
-- Antworte FAST AUSSCHLIESSLICH auf ${langName} mit SEHR EINFACHEN Sätzen (max 10 Wörter)
-- Korrigiere Schülerfehler freundlich aber direkt
-- Stelle einfache Fragen, halte Konversation am Laufen
-- Nutze nur Anfänger-Vokabular`;
   const prompt = `Bisheriger Verlauf:
-${transcript || '(neu)'}
+${transcript || '(neu — der Schüler beginnt das Gespräch)'}
 
 Schüler sagt jetzt: "${userMessage}"
 
-Antworte NUR mit JSON, kein Markdown:
-{
-  "correction": null oder "korrigierte Schüler-Nachricht",
-  "correctionExplanation": null oder "kurze deutsche Erklärung",
-  "reply": "Antwort auf ${langName}",
-  ${pronField}
-  "replyTranslation": "deutsche Übersetzung",
-  "newWords": [{"word":"...","translation":"...","pronunciation":"..."}]
-}
-${pronRule}. newWords: bis zu 3 Wörter aus reply die der Schüler vermutlich noch nicht kennt.`;
-  const text = await callAPI(prompt, 1200, system);
+Antworte gemäß der definierten JSON-Struktur.`;
+  const text = await callAPI(prompt, {
+    max_tokens: 1200,
+    system: tutorSystem(lang),
+    model: MODEL_SONNET,
+    cacheSystem: true,
+  });
   return extractJSON(text);
 }
 
 export async function chatStart(lang) {
-  const langName = LANGUAGES[lang].name;
-  const isZh = lang === 'zh', isRu = lang === 'ru';
-  const pronField = (isZh || isRu) ? '"pronunciation": "...",' : '';
-  const prompt = `Beginne ein freundliches A0-Anfänger-Gespräch auf ${langName}. Begrüße kurz (max 8 Wörter), stelle eine sehr einfache Frage.
-NUR JSON: {"reply":"...",${pronField}"replyTranslation":"...","newWords":[]}`;
-  const text = await callAPI(prompt, 500);
+  const prompt = `Das Gespräch beginnt jetzt. Begrüße den Schüler kurz und freundlich,
+stelle eine einfache Einstiegs-Frage (Name, Befinden, Wochentag, etc.).
+
+Antworte gemäß der definierten JSON-Struktur — correction und correctionExplanation
+sind hier null, weil der Schüler noch nichts gesagt hat.`;
+  const text = await callAPI(prompt, {
+    max_tokens: 600,
+    system: tutorSystem(lang),
+    model: MODEL_SONNET,
+    cacheSystem: true,
+  });
   return extractJSON(text);
 }
 
