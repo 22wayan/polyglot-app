@@ -58,3 +58,14 @@ const pad = (n) => String(n).padStart(2, '0');
 const isoDate = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 export const todayKey = () => isoDate(new Date());
 export const yesterdayKey = () => { const d = new Date(); d.setDate(d.getDate() - 1); return isoDate(d); };
+
+// Streak displayed to the user is only "alive" if the last review was today
+// or yesterday — beyond that the streak is broken regardless of meta.streak,
+// which only updates on the next review.
+export function effectiveStreak(meta) {
+  if (!meta?.lastStudyDate) return 0;
+  if (meta.lastStudyDate === todayKey() || meta.lastStudyDate === yesterdayKey()) {
+    return meta.streak || 0;
+  }
+  return 0;
+}

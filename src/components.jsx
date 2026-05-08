@@ -6,6 +6,7 @@ import {
 } from 'lucide-react';
 import { LANGUAGES, LANG_ORDER, RATINGS, NEW_PER_DAY } from './data';
 import { speak, recognizeSpeech, similarity, speechRecognitionAvailable } from './ai';
+import { effectiveStreak } from './fsrs';
 
 // ---------- Pill / TabBtn ----------
 export function Pill({ icon, value, label, title }) {
@@ -806,14 +807,16 @@ function Metric({ value, label, sub }) {
 export function StatsView({ meta, vocab, scripts, stories, chats }) {
   const newTodayTotal = Object.values(meta.newToday || {}).reduce((a, b) => a + b, 0);
   const totalMined = vocab.filter(c => c.id.startsWith('mined_')).length;
+  const streakLive = effectiveStreak(meta);
   const now = Date.now();
   return (
     <div className="flex-1 py-4 scroll-y">
       <h2 className="font-display text-[28px] leading-tight mb-1">Fortschritt</h2>
       <p className="font-mono text-[10px] uppercase tracking-[0.2em] opacity-40 mb-6">fsrs · stories · chats</p>
-      <div className="grid grid-cols-3 gap-2 mb-6">
-        <Metric value={meta.streak || 0} label="streak" sub="tage" />
-        <Metric value={meta.todayReviewed || 0} label="heute" sub={`${newTodayTotal} neu`} />
+      <div className="grid grid-cols-2 gap-2 mb-6">
+        <Metric value={streakLive} label="streak" sub={streakLive ? 'tage am stück' : 'noch nichts heute'} />
+        <Metric value={meta.todayReviewed || 0} label="heute" sub={`davon ${newTodayTotal} neu`} />
+        <Metric value={meta.totalReviewed || 0} label="insgesamt" sub="alle reviews" />
         <Metric value={totalMined} label="mined" sub="aus stories+chat" />
       </div>
       <div className="space-y-3">
@@ -859,7 +862,7 @@ export function StatsView({ meta, vocab, scripts, stories, chats }) {
               )}
               <div className="flex justify-between font-mono text-[9px] uppercase tracking-wider opacity-50">
                 <span>{storiesCount} stories</span>
-                <span>{chatsCount} chats</span>
+                <span>{chatsCount} nachrichten</span>
               </div>
             </div>
           );

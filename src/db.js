@@ -75,27 +75,31 @@ function rolloverIfNeeded(cur, t) {
   return cur;
 }
 
-// Bump streak inside an existing transaction (or standalone).
+// Bump streak + counters inside an existing transaction (or standalone).
+// Source of truth for "have I studied today already" is lastStudyDate, NOT
+// todayDate — maybeRolloverDay() rewrites todayDate at app mount, which would
+// otherwise make this function think every review happens on the same day.
 function bumpStreakInPlace(cur, t) {
+  const next = { ...cur };
+
+  // Counters: if the day-rollover hasn't been applied yet (first review of
+  // a new day with no prior mount), do it here. Otherwise just increment.
   if (cur.todayDate !== t) {
-    const yest = yesterdayKey();
-    const newStreak = cur.lastStudyDate === yest ? (cur.streak || 0) + 1 : 1;
-    return {
-      ...cur,
-      todayDate: t,
-      todayReviewed: 1,
-      newToday: {},
-      streak: newStreak,
-      lastStudyDate: t,
-      totalReviewed: (cur.totalReviewed || 0) + 1,
-    };
+    next.todayDate = t;
+    next.todayReviewed = 1;
+    next.newToday = {};
+  } else {
+    next.todayReviewed = (cur.todayReviewed || 0) + 1;
   }
-  return {
-    ...cur,
-    todayReviewed: (cur.todayReviewed || 0) + 1,
-    totalReviewed: (cur.totalReviewed || 0) + 1,
-    lastStudyDate: t,
-  };
+  next.totalReviewed = (cur.totalReviewed || 0) + 1;
+
+  // Streak: only mutates on the FIRST review of a calendar day.
+  if (cur.lastStudyDate !== t) {
+    const yest = yesterdayKey();
+    next.streak = cur.lastStudyDate === yest ? (cur.streak || 0) + 1 : 1;
+    next.lastStudyDate = t;
+  }
+  return next;
 }
 
 export async function bumpStreak() {

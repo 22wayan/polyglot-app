@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { Brain, BookOpen, MessageCircle, Languages, BarChart3, Type } from 'lucide-react';
 import { db, getMeta, updateMeta, commitReview, mineWord as dbMineWord, maybeRolloverDay, exportJSON, importJSON, resetAll } from './db';
-import { applyFSRS } from './fsrs';
+import { applyFSRS, effectiveStreak } from './fsrs';
 import { LANGUAGES, LANG_ORDER, NEW_PER_DAY } from './data';
 import * as ai from './ai';
 import {
@@ -261,6 +261,7 @@ export default function App() {
     .filter(([k]) => !k.startsWith('script_'))
     .reduce((a, [, n]) => a + n, 0);
   const newRemaining = Math.max(0, NEW_PER_DAY * activeLangs.length - newTodayTotal);
+  const streakDisplay = effectiveStreak(meta);
 
   return (
     <div className="h-full flex flex-col relative grain max-w-md mx-auto safe-top safe-bottom" style={{ background: '#0F0E0D' }}>
@@ -272,7 +273,7 @@ export default function App() {
           <span className="font-mono text-[8px] uppercase tracking-[0.2em] opacity-30">A0</span>
         </div>
         <div className="flex items-center gap-1.5">
-          <Pill icon="🔥" value={meta.streak || 0} label="streak" title={`${meta.streak || 0} Tage am Stück gelernt`} />
+          <Pill icon="🔥" value={streakDisplay} label="streak" title={`${streakDisplay} Tage am Stück gelernt`} />
           <Pill value={totalDue} label="fällig" title={`${totalDue} Karten zur Wiederholung fällig`} />
           <Pill value={newRemaining} label="neu" title={`${newRemaining} neue Karten heute übrig`} />
         </div>
