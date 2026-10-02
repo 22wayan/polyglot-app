@@ -6,6 +6,10 @@ A language learning app for five languages at once: French, Spanish, Indonesian,
 
 I built it because I learn these five languages in parallel and no app handled that well.
 
+<img src="docs/demo.gif" alt="Demo: rate flashcards, train Chinese characters, check progress" width="360">
+
+*Flashcards with FSRS scheduling, the script trainer and the progress view. The AI tabs need an API key, see below.*
+
 ## Features
 
 - **Spaced repetition with FSRS-4.** Each card is scheduled by the open-source FSRS algorithm, the same family of models Anki uses.
