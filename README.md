@@ -11,8 +11,11 @@ I built it because I learn these five languages in parallel and no app handled t
 - **Spaced repetition with FSRS-4.** Each card is scheduled by the open-source FSRS algorithm, the same family of models Anki uses.
 - **Script trainer** for Cyrillic and Chinese characters, with pinyin and transliteration.
 - **AI tutor.** You chat in the target language; the tutor answers, corrects your sentence, explains the correction and suggests new words you can add as cards with one tap.
-- **AI card generation.** New cards for a topic, without duplicates of what you already know.
+- **AI card generation.** New cards on request, without duplicates of what you already know.
+- **Beginner stories.** Short AI-written stories (A0 level) with a translation for every sentence and key words you can add as cards.
 - **Local-first.** All progress lives in IndexedDB on the device, with export and import as backup.
+
+The interface is in German, and cards go from German to the target language. Five languages are active by default; switch them in the Setup tab.
 
 ## Architecture
 
@@ -51,7 +54,7 @@ npm run lint      # ESLint with React and hooks rules
 npm run build     # production build into dist/
 ```
 
-CI runs lint, tests, build and a secret scan on every push.
+CI runs lint, tests, build and a secret scan on every push. `AGENTS.md` explains the code layout and rules for coding agents.
 
 ```
 api/generate.js        Vercel function, Anthropic proxy with origin check and rate limit
