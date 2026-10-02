@@ -28,4 +28,9 @@ export default [
     files: ['api/**/*.js', 'tests/**/*.js', '*.config.js'],
     languageOptions: { ecmaVersion: 2022, sourceType: 'module', globals: { ...globals.node } },
   },
+  {
+    // Playwright script: runs in Node, the init script runs in the page.
+    files: ['docs/**/*.mjs'],
+    languageOptions: { ecmaVersion: 2022, sourceType: 'module', globals: { ...globals.node, ...globals.browser } },
+  },
 ];
