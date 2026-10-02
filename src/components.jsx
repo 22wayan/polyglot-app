@@ -143,6 +143,9 @@ export function MicButton({ target, langCode, accent }) {
 // ---------- WordChip ----------
 export function WordChip({ word, accent, onMine, isHan }) {
   const [mined, setMined] = useState(false);
+  // Guard: model occasionally emits empty word/translation entries — skip them
+  // instead of rendering an empty pill.
+  if (!word?.word?.trim() || !word?.translation?.trim()) return null;
   return (
     <button
       onClick={async () => { if (mined) return; const ok = await onMine(); setMined(ok !== false); }}
@@ -710,13 +713,17 @@ function UserMsg({ msg, accent, isHan }) {
 
 function TutorMsg({ msg, accent, isHan, L, lang, onMineWord }) {
   const [showTrans, setShowTrans] = useState(false);
+  const correction = msg.correction?.trim?.();
+  const correctionExplanation = msg.correctionExplanation?.trim?.();
+  const target = msg.target?.trim?.();
+  if (!target && !correction) return null; // nothing renderable
   return (
     <div className="flex flex-col items-start gap-1 max-w-[90%]">
-      {msg.correction && (
+      {correction && (
         <div className="rounded-xl px-3 py-2 mb-1 text-[12px] opacity-90" style={{ background: '#FFB84D15', border: '1px solid #FFB84D30', color: '#FFB84D' }}>
           <div className="font-mono text-[9px] uppercase tracking-wider opacity-70 mb-1">Korrektur</div>
-          <div className={`text-[13px] mb-1 ${isHan ? 'font-han' : ''}`}>{msg.correction}</div>
-          {msg.correctionExplanation && <div className="text-[11px] opacity-80 italic">{msg.correctionExplanation}</div>}
+          <div className={`text-[13px] mb-1 ${isHan ? 'font-han' : ''}`}>{correction}</div>
+          {correctionExplanation && <div className="text-[11px] opacity-80 italic">{correctionExplanation}</div>}
         </div>
       )}
       <div className={`rounded-2xl rounded-tl-md px-4 py-2.5 ${isHan ? 'font-han' : ''}`} style={{ background: 'rgba(232,220,196,0.05)', border: '1px solid rgba(232,220,196,0.1)' }}>

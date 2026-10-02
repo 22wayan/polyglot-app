@@ -259,6 +259,34 @@ function extractJSON(text) {
   throw new Error('Kein JSON in der Antwort');
 }
 
+// Models occasionally emit empty-string fields ("", "   ") or placeholder
+// objects in newWords. Without sanitization these render as empty pills,
+// blank correction boxes, or empty chat bubbles. Normalize at the boundary
+// so the rest of the app can trust the shape.
+function trimStr(v) { return typeof v === 'string' ? v.trim() : ''; }
+function trimOrNull(v) { const t = trimStr(v); return t || null; }
+
+function sanitizeChatReply(raw) {
+  const reply = trimStr(raw?.reply);
+  if (!reply) throw new Error('Tutor-Antwort war leer');
+  return {
+    reply,
+    replyTranslation: trimStr(raw?.replyTranslation),
+    pronunciation: trimStr(raw?.pronunciation),
+    correction: trimOrNull(raw?.correction),
+    correctionExplanation: trimOrNull(raw?.correctionExplanation),
+    newWords: Array.isArray(raw?.newWords)
+      ? raw.newWords
+          .map(w => ({
+            word: trimStr(w?.word),
+            translation: trimStr(w?.translation),
+            pronunciation: trimStr(w?.pronunciation),
+          }))
+          .filter(w => w.word && w.translation)
+      : [],
+  };
+}
+
 export async function generateCards(lang, existingPrompts) {
   const langName = LANGUAGES[lang].name;
   const isZh = lang === 'zh', isRu = lang === 'ru';
@@ -444,7 +472,7 @@ Antworte gemäß der definierten JSON-Struktur.`;
     model: MODEL_SONNET,
     cacheSystem: true,
   });
-  return extractJSON(text);
+  return sanitizeChatReply(extractJSON(text));
 }
 
 export async function chatStart(lang) {
@@ -459,7 +487,7 @@ sind hier null, weil der Schüler noch nichts gesagt hat.`;
     model: MODEL_SONNET,
     cacheSystem: true,
   });
-  return extractJSON(text);
+  return sanitizeChatReply(extractJSON(text));
 }
 
 // ============================================================
