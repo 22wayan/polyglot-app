@@ -6,6 +6,8 @@ A language learning app for five languages at once: French, Spanish, Indonesian,
 
 I built it because I learn these five languages in parallel and no app handled that well.
 
+**Live demo: [polyglot-app-five.vercel.app](https://polyglot-app-five.vercel.app)**. Flashcards and the script trainer work right away; for the AI tabs, enter your own Anthropic key in the Setup tab.
+
 <img src="docs/demo.gif" alt="Demo: rate flashcards, train Chinese characters, check progress" width="360">
 
 *Flashcards with FSRS scheduling, the script trainer and the progress view, recorded with `docs/record-demo.mjs`. The AI tabs need an API key, see below.*
