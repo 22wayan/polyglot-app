@@ -1,9 +1,10 @@
 import React, { useState, useRef } from 'react';
-import { Sparkles, Loader2, RotateCcw, Lock, Download, Upload, Key } from 'lucide-react';
+import { Sparkles, Loader2, RotateCcw, Lock, Download, Upload } from 'lucide-react';
 import { LANGUAGES, LANG_ORDER } from '../data';
+import { ApiKeyCard } from './ApiKeyCard';
 
 // ---------- LANGS / SETUP ----------
-export function LangsView({ activeLangs, onToggle, onGenerate, generating, genError, vocab, scripts, hasApiKey, onReset, onExport, onImport }) {
+export function LangsView({ activeLangs, onToggle, onGenerate, generating, genError, vocab, scripts, hasApiKey, onKeyChange, onReset, onExport, onImport }) {
   const fileInput = useRef(null);
   const [shake, setShake] = useState(null);
 
@@ -72,18 +73,7 @@ export function LangsView({ activeLangs, onToggle, onGenerate, generating, genEr
 
       {genError && <div role="alert" className="rounded-xl p-3 mb-4 font-mono text-[11px]" style={{ background: '#FF6B6B15', color: '#FF6B6B', border: '1px solid #FF6B6B30' }}>⚠ {genError}</div>}
 
-      {/* API Key info */}
-      <div className="rounded-2xl p-4 mb-3" style={{ background: hasApiKey ? '#4ADE8010' : 'rgba(232,220,196,0.025)', border: `1px solid ${hasApiKey ? '#4ADE8030' : 'rgba(232,220,196,0.08)'}` }}>
-        <div className="flex items-center gap-2 mb-2">
-          <Key size={14} style={{ color: hasApiKey ? '#4ADE80' : '#E8DCC4', opacity: 0.7 }} aria-hidden="true" />
-          <div className="font-display text-[14px]">KI-Features {hasApiKey ? '· aktiv' : '· gesperrt'}</div>
-        </div>
-        <div className="text-[12px] opacity-80 leading-relaxed">
-          {hasApiKey
-            ? 'Stories, Chat und Karten-Generator stehen zur Verfügung.'
-            : 'Stories, Chat und Karten-Generator brauchen einen Anthropic-API-Key in den Vercel-ENV-Variablen.'}
-        </div>
-      </div>
+      <ApiKeyCard hasApiKey={hasApiKey} onKeyChange={onKeyChange} />
 
       {/* Backup */}
       <div className="rounded-2xl p-4 mb-3" style={{ background: 'rgba(232,220,196,0.025)', border: '1px solid rgba(232,220,196,0.08)' }}>
@@ -105,12 +95,12 @@ export function LangsView({ activeLangs, onToggle, onGenerate, generating, genEr
       </div>
 
       <div className="rounded-2xl p-4 mb-3" style={{ background: 'rgba(232,220,196,0.025)', border: '1px solid rgba(232,220,196,0.08)' }}>
-        <div className="font-display text-[14px] mb-2">v4.0.1 — was drin ist</div>
+        <div className="font-display text-[14px] mb-2">Was drin ist</div>
         <ul className="space-y-1.5 text-[12px] opacity-70 leading-relaxed">
           <li>• <span className="font-mono text-[11px]">FSRS-4</span> Spaced Repetition</li>
           <li>• <span className="font-mono text-[11px]">IndexedDB</span> Persistenz (überlebt Cache-Clear)</li>
           <li>• <span className="font-mono text-[11px]">Schrift</span>: Kyrillisch + Hanzi mit eigenem SRS</li>
-          <li>• <span className="font-mono text-[11px]">Lesen/Chat</span>: aktiv mit API-Key</li>
+          <li>• <span className="font-mono text-[11px]">Lesen/Chat</span>: aktiv mit eigenem API-Key</li>
           <li>• <span className="font-mono text-[11px]">Aussprache-Score</span> mit Mikrofon (wo verfügbar)</li>
           <li>• <span className="font-mono text-[11px]">PWA</span> · Home-Screen-Icon</li>
         </ul>

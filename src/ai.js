@@ -1,5 +1,7 @@
 import { LANGUAGES, MAX_CHAT_HISTORY } from './data';
 import { extractJSON, sanitizeChatReply } from './aiParse';
+import { ANTHROPIC_URL, buildMessagesBody, directHeaders, textFromResponse } from './aiRequest';
+import { getUserKey } from './apiKey';
 
 // ============================================================
 //  Custom error type so the UI can show a nice "lock" state
@@ -182,9 +184,10 @@ export function recognizeSpeech(langCode, { signal } = {}) {
 }
 
 // ============================================================
-//  AI calls — go through /api/generate proxy on Vercel.
-//  When ANTHROPIC_API_KEY is missing, the proxy returns 503
-//  and we throw NoApiKeyError so the UI can show a lock state.
+//  AI calls. With the user's own key (Setup tab) the browser talks to
+//  Anthropic directly. Without it, a self-hosted /api/generate proxy can
+//  hold a server key; when neither exists we throw NoApiKeyError so the
+//  UI can show a lock state.
 // ============================================================
 
 const MODEL_SONNET = 'claude-sonnet-4-6';
@@ -200,7 +203,24 @@ function authHeaders() {
   return h;
 }
 
+async function callAnthropicDirect(key, prompt, { max_tokens, system, model, cacheSystem }) {
+  const res = await fetch(ANTHROPIC_URL, {
+    method: 'POST',
+    headers: directHeaders(key),
+    body: JSON.stringify(buildMessagesBody({ prompt, max_tokens, system, model: model || MODEL_SONNET, cacheSystem })),
+  });
+  if (res.status === 401 || res.status === 403) throw new Error('API-Key ungültig, bitte im Setup prüfen');
+  if (res.status === 429) throw new Error('Zu viele Anfragen, kurz warten');
+  if (!res.ok) {
+    const errText = await res.text().catch(() => '');
+    throw new Error(`Anthropic ${res.status}: ${errText.slice(0, 100)}`);
+  }
+  return textFromResponse(await res.json());
+}
+
 async function callAPI(prompt, { max_tokens = 1500, system = null, model = null, cacheSystem = false } = {}) {
+  const userKey = getUserKey();
+  if (userKey) return callAnthropicDirect(userKey, prompt, { max_tokens, system, model, cacheSystem });
   const body = { prompt, max_tokens };
   if (system) body.system = system;
   if (model) body.model = model;
@@ -428,12 +448,14 @@ sind hier null, weil der Schüler noch nichts gesagt hat.`;
 
 // ============================================================
 //  Probe — quick check whether the API key is configured
-//  Server short-circuits without calling Anthropic.
+//  An own key counts as configured; otherwise ask the proxy, which
+//  answers without calling Anthropic.
 // ============================================================
 // The AI is only available when the probe answers with JSON {ok: true}.
 // A plain 200 is not enough: the Vite dev server answers unknown paths with
 // the app's index.html, which made the app report "AI active" without a backend.
 export async function probeApiKey() {
+  if (getUserKey()) return true;
   try {
     const r = await fetch('/api/generate?probe=1', { method: 'GET', headers: authHeaders() });
     if (r.status !== 200) return false;
@@ -442,5 +464,17 @@ export async function probeApiKey() {
     return data?.ok === true;
   } catch {
     return false;
+  }
+}
+
+// Checks a key before it is stored. The models list costs no tokens.
+export async function verifyUserKey(key) {
+  try {
+    const res = await fetch('https://api.anthropic.com/v1/models?limit=1', { headers: directHeaders(key.trim()) });
+    if (res.ok) return { ok: true };
+    if (res.status === 401 || res.status === 403) return { ok: false, reason: 'Anthropic kennt diesen Key nicht.' };
+    return { ok: false, reason: `Anthropic antwortet mit ${res.status}, später erneut versuchen.` };
+  } catch {
+    return { ok: false, reason: 'Keine Verbindung zu Anthropic.' };
   }
 }
