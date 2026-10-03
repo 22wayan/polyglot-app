@@ -171,14 +171,8 @@ export function LockedAI({ feature }) {
       </div>
       <div className="font-display text-[22px] leading-tight mb-2">{feature} braucht einen API-Key</div>
       <p className="text-sm opacity-60 max-w-[320px] leading-relaxed mb-4">
-        Diese Funktion ruft die Anthropic-API. Du brauchst einen Key auf <span className="font-mono text-[12px]">console.anthropic.com</span> (kostet ~1-3€/Monat bei deinem Use-Case).
+        Diese Funktion nutzt Claude von Anthropic. Trag im Setup-Tab deinen eigenen API-Key ein. Er bleibt auf diesem Gerät, die Kosten laufen über dein Anthropic-Konto.
       </p>
-      <div className="rounded-2xl p-4 max-w-[320px] text-left" style={{ background: 'rgba(232,220,196,0.025)', border: '1px solid rgba(232,220,196,0.1)' }}>
-        <div className="font-mono text-[10px] uppercase tracking-wider opacity-60 mb-2">Wenn du den Key hast:</div>
-        <pre className="font-mono text-[11px] leading-relaxed opacity-80 whitespace-pre-wrap">{`vercel env add \\
-  ANTHROPIC_API_KEY
-vercel deploy --prod`}</pre>
-      </div>
     </div>
   );
 }

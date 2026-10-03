@@ -4,7 +4,7 @@ Guide for coding agents working on this repository. Users find setup and feature
 
 ## What this is
 
-A local-first language learning PWA (React 18, Vite, Tailwind, Dexie). All learning data lives in the browser's IndexedDB. The only server part is `api/generate.js`, a Vercel function that proxies requests to the Anthropic API so the key never reaches the browser.
+A local-first language learning PWA (React 18, Vite, Tailwind, Dexie). All learning data lives in the browser's IndexedDB. Users enter their own Anthropic key in the Setup tab; the browser then calls the Anthropic API directly. `api/generate.js` is an optional Vercel proxy for self-hosting with one server-side key.
 
 ## Commands
 
@@ -30,13 +30,17 @@ npm run build    # production build into dist/
 | `src/data.js` | Languages, seed vocabulary, Cyrillic and Hanzi decks, daily limits |
 | `src/ai.js` | Prompts, API calls, speech synthesis and recognition |
 | `src/aiParse.js` | Parsing and validation of model answers, no browser APIs |
+| `src/apiKey.js` | The user's own key: read, store, mask, format check |
+| `src/aiRequest.js` | Messages API body and headers, shared by the browser path and the proxy |
+| `src/components/ApiKeyCard.jsx` | Setup card to enter, verify and remove the key |
 | `api/generate.js` | Proxy: origin allowlist, optional app token, per-IP rate limit, model allowlist, size caps |
-| `tests/` | Vitest suites for `fsrs.js`, `aiParse.js`, `db.js` and `api/generate.js`; UI and `ai.js` are tested by hand in the browser |
+| `tests/` | Vitest suites for `fsrs.js`, `aiParse.js`, `db.js`, `apiKey.js`, the direct API path in `ai.js` and `api/generate.js`; UI is tested by hand in the browser |
 
 ## Rules for changes
 
 - **Validate model output at the boundary.** Every model answer goes through `aiParse.js` before it reaches state or IndexedDB. Add a test for each new field.
-- **Keep the key on the server.** Nothing in `src/` may read `ANTHROPIC_API_KEY`. Variables with the `VITE_` prefix end up in the public bundle.
+- **Never ship a key.** The user's own key lives only in `localStorage` (`src/apiKey.js`) and goes only to `api.anthropic.com`. Nothing in `src/` may read `ANTHROPIC_API_KEY`; variables with the `VITE_` prefix end up in the public bundle.
+- **Never log, export or send the user's key elsewhere.** Backups (`exportJSON`) cover IndexedDB only, keep it that way.
 - **Proxy limits stay.** Do not widen the origin allowlist, the model allowlist or the size caps in `api/generate.js` without a test for the new case.
 - **Schema changes need a Dexie version bump** in `db.js` and an upgrade path; users keep their progress across releases.
 - **Hooks before early returns.** ESLint enforces the rules of hooks; do not disable them.

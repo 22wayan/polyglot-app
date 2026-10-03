@@ -25,7 +25,8 @@ The interface is in German, and cards go from German to the target language. Fiv
 
 - **Frontend:** React 18, Vite, Tailwind CSS, Dexie.js for IndexedDB, vite-plugin-pwa
 - **AI:** Claude Sonnet for the tutor, Claude Haiku for cheap card generation, with prompt caching for the tutor's system prompt
-- **API proxy:** a Vercel serverless function (`api/generate.js`). The Anthropic key only exists on the server, never in the browser. The proxy checks the origin, limits requests per IP and can require an app token.
+- **Bring your own key:** every user enters their own Anthropic key in the Setup tab. It is stored only in that browser and sent only to `api.anthropic.com`; the app has no server that sees it, and nobody spends someone else's credit.
+- **Optional proxy for self-hosting:** a Vercel function (`api/generate.js`) can hold one server-side key instead, with an origin check, a per-IP rate limit and an optional app token.
 - **Robustness:** model answers are validated and normalised at the boundary, so empty or malformed fields never reach the UI.
 
 ## Run it yourself
@@ -41,19 +42,24 @@ Without an API key the app works as a plain flashcard and script trainer; the AI
 
 ### Enable the AI features
 
-The browser never sees the Anthropic key. It calls `/api/generate`, a Vercel function that adds the key on the server.
+Open the Setup tab, paste your Anthropic API key and press *Key prüfen und speichern*. The app checks the key against Anthropic's models endpoint, which costs no tokens, and keeps it in `localStorage` on this device only. *Key von diesem Gerät entfernen* deletes it again. Get a key at [console.anthropic.com](https://console.anthropic.com/settings/keys) and set a monthly spend limit there.
 
-1. Deploy to Vercel (`npx vercel`).
-2. Set `ANTHROPIC_API_KEY` in the Vercel project settings, see `.env.example`.
-3. Optional: set `VITE_APP_TOKEN` on both sides to reject requests without the token.
-4. Set a monthly spend limit in the Anthropic console. The proxy limits each IP to 12 requests per minute and caps prompts and tokens, but a public URL can still be found.
+The key is readable by any script running on the page, so only use it in a build you trust, such as your own deployment or `npm run dev`.
 
-For local AI testing run `npx vercel dev` instead of `npm run dev`, so the function runs too.
+### Self-hosting with a server key (optional)
+
+If you deploy for people who should not need their own key, put one key on the server instead:
+
+1. Deploy to Vercel (`npx vercel`) and set `ANTHROPIC_API_KEY` in the project settings, see `.env.example`.
+2. Optional: set `VITE_APP_TOKEN` on both sides to reject requests without the token.
+3. Set a monthly spend limit. The proxy limits each IP to 12 requests per minute and caps prompts and tokens, but anyone who finds the URL can use your credit.
+
+A key entered in the Setup tab always wins over the server key. For local tests of the proxy run `npx vercel dev`.
 
 ## Development
 
 ```bash
-npm test          # Vitest: scheduler, model-output parsing, API proxy, IndexedDB layer
+npm test          # Vitest: scheduler, parsing, own-key path, API proxy, IndexedDB layer
 npm run lint      # ESLint with React and hooks rules
 npm run build     # production build into dist/
 ```
@@ -63,6 +69,8 @@ CI runs lint, tests, build and a secret scan on every push. `AGENTS.md` explains
 ```
 api/generate.js        Vercel function, Anthropic proxy with origin check and rate limit
 src/fsrs.js            FSRS-4 scheduler, pure functions
+src/apiKey.js          the user's own key in localStorage
+src/aiRequest.js       Messages API request body, shared by browser and proxy
 src/aiParse.js         parsing and validation of model answers
 src/ai.js              prompts and API calls
 src/db.js              Dexie schema, seed data, backup export and import

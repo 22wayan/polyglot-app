@@ -43,6 +43,12 @@ export default function App() {
     return () => { cancelled = true; };
   }, []);
 
+  // Re-check after the user saves or removes their own key in Setup.
+  const refreshApiKey = useCallback(async () => {
+    setGenError(null);
+    setHasApiKey(await ai.probeApiKey());
+  }, []);
+
   // ---------- Curriculum: pick next vocab card ----------
   const currentVocab = useMemo(() => {
     if (!meta || !vocab.length) return null;
@@ -120,7 +126,7 @@ export default function App() {
       const cards = await ai.generateCards(lang, existing);
       if (cards.length) await db.vocab.bulkAdd(cards);
     } catch (e) {
-      if (e instanceof ai.NoApiKeyError) { setHasApiKey(false); setGenError('API-Key fehlt — siehe Setup-Tab'); }
+      if (e instanceof ai.NoApiKeyError) { setHasApiKey(false); setGenError('API-Key fehlt, trag deinen eigenen im Setup-Tab ein'); }
       else { setGenError(e.message); }
     } finally { setGenerating(null); }
   }, [vocab]);
@@ -133,7 +139,7 @@ export default function App() {
       await db.stories.put(story);
       setActiveStoryId(story.id);
     } catch (e) {
-      if (e instanceof ai.NoApiKeyError) { setHasApiKey(false); setGenError('API-Key fehlt — siehe Setup-Tab'); }
+      if (e instanceof ai.NoApiKeyError) { setHasApiKey(false); setGenError('API-Key fehlt, trag deinen eigenen im Setup-Tab ein'); }
       else { setGenError(e.message); }
     } finally { setGenerating(null); }
   }, [stories]);
@@ -351,6 +357,7 @@ export default function App() {
             vocab={vocab}
             scripts={scripts}
             hasApiKey={hasApiKey}
+            onKeyChange={refreshApiKey}
             onReset={handleReset}
             onExport={exportJSON}
             onImport={handleImport}
